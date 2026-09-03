@@ -61,7 +61,7 @@ class OrderState(StatesGroup):
     waiting_for_fop = State()
     waiting_for_custom_qty = State()
 
-# Головне меню (не зникає)
+# Головне меню (знизу екрана)
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🛒 Обрати товари")],
@@ -133,7 +133,30 @@ async def add_to_cart(callback: CallbackQuery):
         "qty": qty
     })
     
-    await callback.message.edit_text(f"✅ Додано в кошик: {item_data['name']} — {qty} шт.")
+    # Кнопки для швидкого переходу в кошик після додавання
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛒 Перейти до кошика", callback_data="open_cart_inline")],
+        [InlineKeyboardButton(text="🔙 Продовжити покупки", callback_data="back_to_catalog")]
+    ])
+    
+    await callback.message.edit_text(
+        f"✅ <b>Успішно додано!</b>\n▫️ {item_data['name']} — {qty} шт.",
+        reply_markup=kb, parse_mode="HTML"
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "open_cart_inline")
+async def open_cart_from_inline(callback: CallbackQuery):
+    await view_cart_summary_msg(callback.message, callback.from_user.id)
+    await callback.answer()
+
+@dp.callback_query(F.data == "back_to_catalog")
+async def back_to_catalog(callback: CallbackQuery):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🦷 Стоматологія та догляд", callback_data="cat_stomat")],
+        [InlineKeyboardButton(text="📦 Інші товари (Аредерма, Гелі, Спреї)", callback_data="cat_other")]
+    ])
+    await callback.message.edit_text("Оберіть категорію товарів:", reply_markup=keyboard)
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("customqty_"))
@@ -159,12 +182,14 @@ async def process_custom_qty(message: Message, state: FSMContext):
         
     users_cart[user_id].append({"name": item_data["name"], "price": item_data["price"], "qty": qty})
     
-    await message.answer(f"✅ Додано в кошик: {item_data['name']} — {qty} шт.")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛒 Перейти до кошика", callback_data="open_cart_inline")]
+    ])
+    await message.answer(f"✅ Додано в кошик: {item_data['name']} — {qty} шт.", reply_markup=kb, parse_mode="HTML")
     await state.clear()
 
-@dp.message(F.text == "🗑 Кошик")
-async def view_cart_summary(message: Message):
-    user_id = message.from_user.id
+# Общая функция отображения кошика
+async def view_cart_summary_msg(message: Message, user_id: int):
     cart = users_cart.get(user_id, [])
     
     if not cart:
@@ -180,6 +205,10 @@ async def view_cart_summary(message: Message):
     ])
     
     await message.answer(f"🛒 У кошику {len(cart)} позицій.\nЗагальна сума: <b>{total_sum} грн</b>", reply_markup=kb, parse_mode="HTML")
+
+@dp.message(F.text == "🗑 Кошик")
+async def view_cart_summary(message: Message):
+    await view_cart_summary_msg(message, message.from_user.id)
 
 @dp.callback_query(F.data == "view_all_cart")
 async def view_all_cart_items(callback: CallbackQuery):
@@ -262,7 +291,7 @@ async def checkout_confirm(message: Message, state: FSMContext):
 async def finish_order(callback: CallbackQuery, state: FSMContext):
     order_number = f"SRN-{random.randint(10000, 99999)}"
     
-    # Отправка уведомления администратору (тебе)
+    # Відправка сповіщення адміністратору
     try:
         data = await state.get_data()
         cart = users_cart.get(callback.from_user.id, [])
@@ -280,7 +309,7 @@ async def finish_order(callback: CallbackQuery, state: FSMContext):
         
         await bot.send_message(ADMIN_ID, admin_text, parse_mode="HTML")
     except Exception as e:
-        print(f"Не удалось отправить уведомление админу: {e}")
+        print(f"Не вдалося відправити сповіщення адміну: {e}")
 
     await callback.message.edit_text(
         f"Дякуємо за довіру до команди Sirion!\n\n"

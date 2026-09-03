@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -11,18 +12,35 @@ from aiogram.types import (
     KeyboardButton,
     ReplyKeyboardMarkup,
 )
+from aiohttp import web
 
 # -------------------------------------------------------------------
 # КОНФИГУРАЦИЯ
 # -------------------------------------------------------------------
 BOT_TOKEN = "8863794029:AAFksCksSBjsxJvwHKElKV8yyf_mYT0C0Go"
-ADMIN_CHAT_ID = 8733425033 
+ADMIN_CHAT_ID = 8733425033
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 USER_DOCS_DB = {}
+
+# -------------------------------------------------------------------
+# ВЕБ-СЕРВЕР ДЛЯ RENDER (Заглушка порта)
+# -------------------------------------------------------------------
+async def handle_ping(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"Dummy web server started on port {port}")
 
 # -------------------------------------------------------------------
 # КАТАЛОГ ТОВАРОВ
@@ -374,6 +392,7 @@ async def order_cancelled(callback: types.CallbackQuery, state: FSMContext):
 # ЗАПУСК
 # -------------------------------------------------------------------
 async def main():
+    await start_web_server()
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":

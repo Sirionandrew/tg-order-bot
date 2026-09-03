@@ -14,7 +14,7 @@ from aiogram.types import (
 )
 
 # -------------------------------------------------------------------
-# КОНФИГУРАЦИЯ (НАСТРОЙКИ)
+# КОНФИГУРАЦИЯ
 # -------------------------------------------------------------------
 BOT_TOKEN = "8863794029:AAFksCksSBjsxJvwHKElKV8yyf_mYT0C0Go"
 ADMIN_CHAT_ID = 8733425033 
@@ -23,7 +23,6 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# База данных сохраненных реквизитов клиентов (в памяти бота)
 USER_DOCS_DB = {}
 
 # -------------------------------------------------------------------
@@ -35,24 +34,17 @@ CATALOG = {
     "prod_3": {"name": "Захисний спрей з пробіотиками (150 мл)", "price": 420},
 }
 
-# -------------------------------------------------------------------
-# СОСТОЯНИЯ ДИАЛОГА (FSM)
-# -------------------------------------------------------------------
 class OrderForm(StatesGroup):
     selecting_products = State()
     delivery_type = State()
     city = State()
-    warehouse = State()       # Отделение / почтомат
-    street_address = State()  # Адресная доставка
+    warehouse = State()
+    street_address = State()
     full_name = State()
     phone = State()
-    upload_docs = State()     # Загрузка документов/реквизитов
+    upload_docs = State()
     confirm = State()
 
-
-# -------------------------------------------------------------------
-# ВСПОМОГАТЕЛЬНЫЕ КЛАВИАТУРЫ
-# -------------------------------------------------------------------
 def get_catalog_keyboard(cart: dict):
     buttons = []
     for code, item in CATALOG.items():
@@ -67,16 +59,14 @@ def get_catalog_keyboard(cart: dict):
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-
 def get_main_menu_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="🛒 Каталог товарів / Замовити")]],
         resize_keyboard=True,
     )
 
-
 # -------------------------------------------------------------------
-# ОБРАБОТЧИКИ КОМАНД И СООБЩЕНИЙ
+# ОБРАБОТЧИКИ
 # -------------------------------------------------------------------
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
@@ -85,7 +75,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
         "Вітаємо у нашому магазині! Натисніть кнопку нижче, щоб переглянути каталог та зробити замовлення.",
         reply_markup=get_main_menu_keyboard(),
     )
-
 
 @dp.message(F.text == "🛒 Каталог товарів / Замовити")
 async def show_catalog(message: types.Message, state: FSMContext):
@@ -98,8 +87,6 @@ async def show_catalog(message: types.Message, state: FSMContext):
         reply_markup=get_catalog_keyboard(cart),
     )
 
-
-# Добавление товара в корзину
 @dp.callback_query(OrderForm.selecting_products, F.data.startswith("add_"))
 async def add_to_cart(callback: types.CallbackQuery, state: FSMContext):
     prod_code = callback.data.replace("add_", "")
@@ -111,26 +98,25 @@ async def add_to_cart(callback: types.CallbackQuery, state: FSMContext):
     
     total_sum = sum(CATALOG[code]["price"] * qty for code, qty in cart.items())
     
+    await callback.answer("Товар додано")
     await callback.message.edit_text(
         f"Товар додано! Поточна сума кошика: **{total_sum} грн**\n\nВиберіть ще товари або натисніть «Оформити замовлення»:",
         parse_mode="Markdown",
         reply_markup=get_catalog_keyboard(cart),
     )
 
-
-# Очистка корзины
 @dp.callback_query(OrderForm.selecting_products, F.data == "clear_cart")
 async def clear_cart(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(cart={})
+    await callback.answer("Кошик очищено")
     await callback.message.edit_text(
         "Кошик очищено. Оберіть товари заново:",
         reply_markup=get_catalog_keyboard({}),
     )
 
-
-# Переход к оформлению доставки
 @dp.callback_query(OrderForm.selecting_products, F.data == "checkout")
 async def start_checkout(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🏢 Відділення / Поштомат", callback_data="del_warehouse")],
@@ -142,10 +128,9 @@ async def start_checkout(callback: types.CallbackQuery, state: FSMContext):
     )
     await state.set_state(OrderForm.delivery_type)
 
-
-# Выбор типа доставки
 @dp.callback_query(OrderForm.delivery_type, F.data.in_({"del_warehouse", "del_courier"}))
 async def process_delivery_type(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
     delivery_type = (
         "Відділення / Поштомат"
         if callback.data == "del_warehouse"
@@ -158,38 +143,30 @@ async def process_delivery_type(callback: types.CallbackQuery, state: FSMContext
     )
     await state.set_state(OrderForm.city)
 
-
-# Ввод города
 @dp.message(OrderForm.city)
 async def process_city(message: types.Message, state: FSMContext):
     await state.update_data(city=message.text)
     data = await state.get_data()
 
-    if data["delivery_code"] == "del_warehouse":
+    if data.get("delivery_code") == "del_warehouse":
         await message.answer("Вкажіть **номер відділення** або **поштомата** Нової Пошти:")
         await state.set_state(OrderForm.warehouse)
     else:
         await message.answer("Вкажіть **вулицю, номер будинку та квартири** для кур'єра:")
         await state.set_state(OrderForm.street_address)
 
-
-# Ввод отделения
 @dp.message(OrderForm.warehouse)
 async def process_warehouse(message: types.Message, state: FSMContext):
     await state.update_data(address_details=f"Відділення/Поштомат: {message.text}")
     await message.answer("Введіть **ПІБ отримувача** (Прізвище та Ім'я повністю):")
     await state.set_state(OrderForm.full_name)
 
-
-# Ввод адреса курьера
 @dp.message(OrderForm.street_address)
 async def process_street_address(message: types.Message, state: FSMContext):
     await state.update_data(address_details=f"Адреса кур'єра: {message.text}")
     await message.answer("Введіть **ПІБ отримувача** (Прізвище та Ім'я повністю):")
     await state.set_state(OrderForm.full_name)
 
-
-# Ввод ФИО
 @dp.message(OrderForm.full_name)
 async def process_full_name(message: types.Message, state: FSMContext):
     await state.update_data(full_name=message.text)
@@ -207,15 +184,12 @@ async def process_full_name(message: types.Message, state: FSMContext):
     )
     await state.set_state(OrderForm.phone)
 
-
-# Ввод телефона и логика проверки сохраненных документов
 @dp.message(OrderForm.phone)
 async def process_phone(message: types.Message, state: FSMContext):
     phone = message.contact.phone_number if message.contact else message.text
     await state.update_data(phone=phone)
     user_id = message.from_user.id
 
-    # Проверяем, есть ли у нас сохраненные реквизиты/документы этого клиента
     if user_id in USER_DOCS_DB:
         saved_doc = USER_DOCS_DB[user_id]
         kb = InlineKeyboardMarkup(
@@ -228,11 +202,9 @@ async def process_phone(message: types.Message, state: FSMContext):
             f"📄 **Ваші реквізити збережено з попереднього замовлення:**\n`{saved_doc['doc_name']}`\n\nБажаєте використати їх чи завантажити нові?",
             parse_mode="Markdown",
             reply_markup=kb,
-            reply_markup_type=ReplyKeyboardRemove(),
         )
         await state.set_state(OrderForm.upload_docs)
     else:
-        # Если клиент первый раз
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="⏭ Пропустити цей крок", callback_data="skip_docs")]
@@ -241,16 +213,14 @@ async def process_phone(message: types.Message, state: FSMContext):
         await message.answer(
             "📄 **Надішліть документи / реквізити для вистави рахунку:**\n\n"
             "Ви можете прикріпити фото або файл (виписка ФОП/ТОВ, реквізити) або вписати текстом ЄДРПОУ/ІПН.\n\n"
-            "Якщо ви купуєте як приватна особа або надсилали реквізити раніше — натисніть «Пропустити цей крок»:",
+            "Якщо ви купуєте як приватна особа — натисніть «Пропустити цей крок»:",
             reply_markup=kb,
-            reply_markup_type=ReplyKeyboardRemove(),
         )
         await state.set_state(OrderForm.upload_docs)
 
-
-# Использование сохраненных реквизитов
 @dp.callback_query(OrderForm.upload_docs, F.data == "use_saved_docs")
 async def use_saved_docs_handler(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
     user_id = callback.from_user.id
     saved_doc = USER_DOCS_DB.get(user_id, {})
     await state.update_data(
@@ -260,10 +230,9 @@ async def use_saved_docs_handler(callback: types.CallbackQuery, state: FSMContex
     )
     await show_order_summary(callback, state)
 
-
-# Запрос новых реквизитов при обновлении
 @dp.callback_query(OrderForm.upload_docs, F.data == "change_docs")
 async def change_docs_handler(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⏭ Пропустити цей крок", callback_data="skip_docs")]
@@ -274,8 +243,6 @@ async def change_docs_handler(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=kb,
     )
 
-
-# Обработка отправки файла/фото/текста с документами
 @dp.message(OrderForm.upload_docs, F.document | F.photo | F.text)
 async def process_docs_file(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -292,21 +259,17 @@ async def process_docs_file(message: types.Message, state: FSMContext):
         doc_type = "text"
         doc_name = f"Текст: {message.text}"
 
-    # Сохраняем в память для следующих заказов
     USER_DOCS_DB[user_id] = {"doc_id": doc_id, "doc_type": doc_type, "doc_name": doc_name}
 
     await state.update_data(doc_id=doc_id, doc_type=doc_type, doc_name=doc_name)
     await show_order_summary(message, state)
 
-
-# Пропуск отправки документов
 @dp.callback_query(OrderForm.upload_docs, F.data == "skip_docs")
 async def process_docs_skip(callback: types.CallbackQuery, state: FSMContext):
-    await state.update_data(doc_id=None, doc_type="skipped", doc_name="Не надано / Повторний клієнт")
+    await callback.answer()
+    await state.update_data(doc_id=None, doc_type="skipped", doc_name="Не надано")
     await show_order_summary(callback, state)
 
-
-# Формирование и показ сводки
 async def show_order_summary(message_or_callback, state: FSMContext):
     data = await state.get_data()
     cart = data.get("cart", {})
@@ -314,20 +277,21 @@ async def show_order_summary(message_or_callback, state: FSMContext):
     items_text = ""
     total_sum = 0
     for code, qty in cart.items():
-        item = CATALOG[code]
-        item_total = item["price"] * qty
-        total_sum += item_total
-        items_text += f"• {item['name']} x{qty} = {item_total} грн\n"
+        item = CATALOG.get(code, {})
+        if item:
+            item_total = item["price"] * qty
+            total_sum += item_total
+            items_text += f"• {item['name']} x{qty} = {item_total} грн\n"
 
     summary_text = (
         "📋 **Перевірте дані вашого замовлення:**\n\n"
         f"📦 **Товари:**\n{items_text}\n"
         f"💰 **Загальна сума:** {total_sum} грн\n\n"
-        f"• **Доставка:** {data['delivery_type']}\n"
-        f"• **Місто:** {data['city']}\n"
-        f"• **Адреса/Відділення:** {data['address_details']}\n"
-        f"• **Отримувач:** {data['full_name']}\n"
-        f"• **Телефон:** {data['phone']}\n"
+        f"• **Доставка:** {data.get('delivery_type', '-')}\n"
+        f"• **Місто:** {data.get('city', '-')}\n"
+        f"• **Адреса/Відділення:** {data.get('address_details', '-')}\n"
+        f"• **Отримувач:** {data.get('full_name', '-')}\n"
+        f"• **Телефон:** {data.get('phone', '-')}\n"
         f"• **Реквізити:** {data.get('doc_name', 'Не вказано')}\n"
     )
 
@@ -345,10 +309,9 @@ async def show_order_summary(message_or_callback, state: FSMContext):
 
     await state.set_state(OrderForm.confirm)
 
-
-# Финальное подтверждение
 @dp.callback_query(OrderForm.confirm, F.data == "confirm_yes")
 async def order_confirmed(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
     data = await state.get_data()
     cart = data.get("cart", {})
     user = callback.from_user
@@ -357,53 +320,52 @@ async def order_confirmed(callback: types.CallbackQuery, state: FSMContext):
     items_text = ""
     total_sum = 0
     for code, qty in cart.items():
-        item = CATALOG[code]
-        item_total = item["price"] * qty
-        total_sum += item_total
-        items_text += f"• {item['name']} x{qty} = {item_total} грн\n"
+        item = CATALOG.get(code, {})
+        if item:
+            item_total = item["price"] * qty
+            total_sum += item_total
+            items_text += f"• {item['name']} x{qty} = {item_total} грн\n"
 
-    # Текст для администратора
     admin_text = (
         "🔔 **НАДІЙШЛО НОВЕ ЗАМОВЛЕННЯ!**\n\n"
         f"👤 **Покупець в TG:** {user.full_name} ({username})\n"
         f"🆔 **ID клієнта:** `{user.id}`\n\n"
         f"📦 **Товари:**\n{items_text}\n"
         f"💵 **СУМА ЗАМОВЛЕННЯ:** {total_sum} грн\n\n"
-        f"🚚 **Тип доставки:** {data['delivery_type']}\n"
-        f"🏙 **Місто:** {data['city']}\n"
-        f"📍 **Деталі адреси:** {data['address_details']}\n"
-        f"📛 **ПІБ:** {data['full_name']}\n"
-        f"📞 **Тел:** {data['phone']}\n"
+        f"🚚 **Тип доставки:** {data.get('delivery_type', '-')}\n"
+        f"🏙 **Місто:** {data.get('city', '-')}\n"
+        f"📍 **Деталі адреси:** {data.get('address_details', '-')}\n"
+        f"📛 **ПІБ:** {data.get('full_name', '-')}\n"
+        f"📞 **Тел:** {data.get('phone', '-')}\n"
         f"📄 **Реквізити/Документи:** {data.get('doc_name', 'Не надіслано')}"
     )
 
-    # Отправка администратору
-    await bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_text, parse_mode="Markdown")
+    try:
+        await bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_text, parse_mode="Markdown")
 
-    # Пересылаем файл/фото документов администратору (даже если они сохраненные)
-    doc_type = data.get("doc_type")
-    doc_id = data.get("doc_id")
-    if doc_type == "document" and doc_id:
-        await bot.send_document(chat_id=ADMIN_CHAT_ID, document=doc_id, caption=f"📄 Документи від {user.full_name}")
-    elif doc_type == "photo" and doc_id:
-        await bot.send_photo(chat_id=ADMIN_CHAT_ID, photo=doc_id, caption=f"📄 Фото документів від {user.full_name}")
+        doc_type = data.get("doc_type")
+        doc_id = data.get("doc_id")
+        if doc_type == "document" and doc_id:
+            await bot.send_document(chat_id=ADMIN_CHAT_ID, document=doc_id, caption=f"📄 Документи від {user.full_name}")
+        elif doc_type == "photo" and doc_id:
+            await bot.send_photo(chat_id=ADMIN_CHAT_ID, photo=doc_id, caption=f"📄 Фото документів від {user.full_name}")
+    except Exception as e:
+        logging.error(f"Помилка відправки адміну: {e}")
 
-    # Ответ клиенту
     await callback.message.edit_text(
         "🎉 **Дякуємо! Ваше замовлення прийнято.**\n\n"
         "📄 Наш менеджер перевірить наявність та надішле вам рахунок на оплату найближчим часом."
     )
     
-    # Сбрасываем состояние и даем возможность сделать НОВЫЙ заказ
     await state.clear()
     await callback.message.answer(
         "Ви можете зробити ще одне замовлення у будь-який час:",
         reply_markup=get_main_menu_keyboard()
     )
 
-
 @dp.callback_query(OrderForm.confirm, F.data == "confirm_no")
 async def order_cancelled(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
     await callback.message.edit_text("Замовлення скасовано.")
     await state.clear()
     await callback.message.answer(
@@ -411,12 +373,11 @@ async def order_cancelled(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=get_main_menu_keyboard()
     )
 
-
 # -------------------------------------------------------------------
 # ЗАПУСК
 # -------------------------------------------------------------------
 async def main():
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
     asyncio.run(main())

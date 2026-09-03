@@ -4,13 +4,14 @@ import random
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command, StateFilter
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# Забираем токен из переменных окружения Render
-BOT_TOKEN = os.getenv("BOT_TOKEN", "СЮДА_ВСТАВЬ_СВОЙ_ТОКЕН_ЕСЛИ_ЗАПУСКАЕШЬ_ЛОКАЛЬНО")
+# Твой токен и ID администратора
+BOT_TOKEN = "8863794029:AAFksCksSBjsxJvwHKElKV8yyf_mYT0C0Go"
+ADMIN_ID = 8733425033
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -18,7 +19,7 @@ dp = Dispatcher(storage=MemoryStorage())
 # Корзины пользователей
 users_cart = {}
 
-# Готовый каталог из Excel-прайса
+# Каталог из прайса (Стоматологія та інші товари)
 CATALOG = {
     "stomat": {
         "title": "🦷 Стоматологія та догляд",
@@ -52,7 +53,7 @@ CATALOG = {
     }
 }
 
-# --- Машина станів для замовлення ---
+# Машина станів для замовлення
 class OrderState(StatesGroup):
     waiting_for_city = State()
     waiting_for_address = State()
@@ -60,7 +61,7 @@ class OrderState(StatesGroup):
     waiting_for_fop = State()
     waiting_for_custom_qty = State()
 
-# --- Головне меню ---
+# Головне меню (не зникає)
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🛒 Обрати товари")],
@@ -76,7 +77,6 @@ async def cmd_start(message: Message, state: FSMContext):
     users_cart[message.from_user.id] = []
     await message.answer("Вітаємо! Оберіть дію в меню нижче:", reply_markup=main_menu)
 
-# --- Навігація по каталогу ---
 @dp.message(F.text == "🛒 Обрати товари")
 async def show_categories(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -90,7 +90,6 @@ async def show_products(callback: CallbackQuery):
     cat_id = callback.data.split("_")[1]
     category = CATALOG[cat_id]
     
-    # Відправляємо товари списком з кнопкою вибору
     for item in category["items"]:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Додати в кошик", callback_data=f"item_{cat_id}_{item['id']}")]
@@ -101,7 +100,6 @@ async def show_products(callback: CallbackQuery):
         )
     await callback.answer()
 
-# --- Вибір кількості ---
 @dp.callback_query(F.data.startswith("item_"))
 async def select_quantity(callback: CallbackQuery, state: FSMContext):
     _, cat_id, item_id = callback.data.split("_")
@@ -138,7 +136,6 @@ async def add_to_cart(callback: CallbackQuery):
     await callback.message.edit_text(f"✅ Додано в кошик: {item_data['name']} — {qty} шт.")
     await callback.answer()
 
-# --- Ручне введення кількості ---
 @dp.callback_query(F.data.startswith("customqty_"))
 async def custom_qty_prompt(callback: CallbackQuery, state: FSMContext):
     _, cat_id, item_id = callback.data.split("_")
@@ -165,7 +162,6 @@ async def process_custom_qty(message: Message, state: FSMContext):
     await message.answer(f"✅ Додано в кошик: {item_data['name']} — {qty} шт.")
     await state.clear()
 
-# --- Кошик ---
 @dp.message(F.text == "🗑 Кошик")
 async def view_cart_summary(message: Message):
     user_id = message.from_user.id
@@ -205,18 +201,15 @@ async def remove_last_item(callback: CallbackQuery):
     cart = users_cart.get(callback.from_user.id, [])
     if cart:
         removed = cart.pop()
-        await callback.message.edit_text(f"❌ Видалено: {removed['name']}")
+        await callback.message.edit_text(f"❌ Видалено останній товар: {removed['name']}")
     else:
         await callback.answer("Кошик порожній", show_alert=True)
 
-# --- Оформлення замовлення (Тільки ФОП/ТОВ) ---
+# Оформлення замовлення
 @dp.callback_query(F.data == "start_checkout")
 async def checkout_city(callback: CallbackQuery, state: FSMContext):
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Відмінити оформлення", callback_data="cancel_order")]])
-    await callback.message.answer(
-        "Введіть назву міста (Ми співпрацюємо переважно з містами, де є клініки):",
-        reply_markup=kb
-    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Відмінити", callback_data="cancel_order")]])
+    await callback.message.answer("Введіть назву міста (працюємо з клініками у містах):", reply_markup=kb)
     await state.set_state(OrderState.waiting_for_city)
     await callback.answer()
 
@@ -224,27 +217,21 @@ async def checkout_city(callback: CallbackQuery, state: FSMContext):
 async def checkout_address(message: Message, state: FSMContext):
     await state.update_data(city=message.text)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад до міста", callback_data="start_checkout")]])
-    await message.answer("Введіть адресу відділення Нової Пошти (або адресу клініки):", reply_markup=kb)
+    await message.answer("Введіть адресу відділення Нової Пошти (або клініки):", reply_markup=kb)
     await state.set_state(OrderState.waiting_for_address)
 
 @dp.message(OrderState.waiting_for_address)
 async def checkout_phone(message: Message, state: FSMContext):
     await state.update_data(address=message.text)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад до адреси", callback_data="back_to_address")]])
-    await message.answer(
-        "Введіть контактний номер телефону отримувача (тієї людини, яка буде забирати замовлення):", 
-        reply_markup=kb
-    )
+    await message.answer("Введіть контактний номер телефону отримувача (хто буде забирати вантаж):", reply_markup=kb)
     await state.set_state(OrderState.waiting_for_phone)
 
 @dp.message(OrderState.waiting_for_phone)
 async def checkout_fop(message: Message, state: FSMContext):
     await state.update_data(phone=message.text)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад до телефону", callback_data="back_to_phone")]])
-    await message.answer(
-        "Введіть дані вашого ФОП або ТОВ для виставлення рахунку (назва, ЄДРПОУ):", 
-        reply_markup=kb
-    )
+    await message.answer("Введіть дані вашого ФОП або ТОВ (назва, ЄДРПОУ):", reply_markup=kb)
     await state.set_state(OrderState.waiting_for_fop)
 
 @dp.message(OrderState.waiting_for_fop)
@@ -254,14 +241,14 @@ async def checkout_confirm(message: Message, state: FSMContext):
     cart = users_cart.get(message.from_user.id, [])
     total_sum = sum(item['price'] * item['qty'] for item in cart)
     
-    order_text = "<b>Останній крок! Перевірте дані вашого замовлення:</b>\n\n"
+    order_text = "<b>Перевірте дані вашого замовлення:</b>\n\n"
     for idx, item in enumerate(cart, 1):
         order_text += f"▫️ {idx}. {item['name']} — {item['qty']} шт.\n"
     
     order_text += f"\n<b>Загальна сума:</b> {total_sum} грн\n\n"
     order_text += f"<b>Місто:</b> {data['city']}\n"
     order_text += f"<b>Адреса:</b> {data['address']}\n"
-    order_text += f"<b>Номер отримувача:</b> {data['phone']}\n"
+    order_text += f"<b>Телефон отримувача:</b> {data['phone']}\n"
     order_text += f"<b>Дані ФОП/ТОВ:</b> {data['fop']}\n"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -275,16 +262,35 @@ async def checkout_confirm(message: Message, state: FSMContext):
 async def finish_order(callback: CallbackQuery, state: FSMContext):
     order_number = f"SRN-{random.randint(10000, 99999)}"
     
+    # Отправка уведомления администратору (тебе)
+    try:
+        data = await state.get_data()
+        cart = users_cart.get(callback.from_user.id, [])
+        total_sum = sum(item['price'] * item['qty'] for item in cart)
+        
+        admin_text = f"🚨 <b>НОВЕ ЗАМОВЛЕННЯ №{order_number}</b>\n\n"
+        for idx, item in enumerate(cart, 1):
+            admin_text += f"▫️ {idx}. {item['name']} — {item['qty']} шт.\n"
+        admin_text += f"\n<b>Сума:</b> {total_sum} грн\n"
+        admin_text += f"<b>Місто:</b> {data.get('city')}\n"
+        admin_text += f"<b>Адреса:</b> {data.get('address')}\n"
+        admin_text += f"<b>Телефон:</b> {data.get('phone')}\n"
+        admin_text += f"<b>ФОП/ТОВ:</b> {data.get('fop')}\n"
+        admin_text += f"<b>Клієнт ID:</b> {callback.from_user.id}"
+        
+        await bot.send_message(ADMIN_ID, admin_text, parse_mode="HTML")
+    except Exception as e:
+        print(f"Не удалось отправить уведомление админу: {e}")
+
     await callback.message.edit_text(
         f"Дякуємо за довіру до команди Sirion!\n\n"
         f"Ваше замовлення <b>№{order_number}</b> успішно прийнято.\n"
-        f"Наш менеджер перевірить дані та надішле вам рахунок в особисті повідомлення.",
+        f"Наш менеджер надішле вам рахунок в особисті повідомлення.",
         parse_mode="HTML"
     )
     users_cart[callback.from_user.id] = []
     await state.clear()
 
-# --- Обробка кнопок Назад ---
 @dp.callback_query(F.data == "back_to_address")
 async def back_addr(callback: CallbackQuery, state: FSMContext):
     await checkout_address(callback.message, state)
@@ -302,20 +308,16 @@ async def cancel_order(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text("Оформлення відмінено.")
 
-# --- Прайс (Заглушка) ---
 @dp.message(F.text == "📋 Прайс")
 async def send_price(message: Message):
-    await message.answer("Тут буде актуальний файл або картинка прайсу (можна додати PDF в код).")
+    await message.answer("Актуальний прайс можна переглянути на нашому сайті або уточнити у менеджера.")
 
 
-# ==========================================
-# ВЕБ-СЕРВЕР ДЛЯ RENDER (ЧТОБЫ БОТ НЕ СПАЛ)
-# ==========================================
+# Веб-сервер для тримання бота онлайн 24/7 (Render)
 async def handle_ping(request):
     return web.Response(text="Bot is running!")
 
 async def start_bot(app):
-    # Запускаем aiogram параллельно с aiohttp
     asyncio.create_task(dp.start_polling(bot))
 
 def main():
